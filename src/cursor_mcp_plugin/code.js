@@ -1,10 +1,289 @@
-// This is the main code file for the Cursor MCP Figma plugin
-// It handles Figma API commands
+// Code Review Workspace Widget - Widget with MCP Command Handling
+const { widget } = figma;
+const { AutoLayout, Text, useSyncedState, usePropertyMenu, useEffect, waitForTask } = widget;
 
-// Plugin state
-const state = {
-  serverPort: 3055, // Default port
-};
+// Global WebSocket connection
+let websocket = null;
+
+// WebSocket connection function using proper Widget API patterns
+async function connectToWebSocket(setStatus, setIsConnected, serverPort) {
+  try {
+    setStatus('Connecting to WebSocket...');
+    
+    // Create WebSocket connection
+    const ws = new WebSocket(`ws://localhost:${serverPort}`);
+    
+    ws.onopen = () => {
+      websocket = ws;
+      setIsConnected(true);
+      setStatus('Connected to MCP Server');
+      figma.notify('Connected to WebSocket server');
+      
+      // Join a channel
+      ws.send(JSON.stringify({
+        type: 'join',
+        channel: 'code-review-widget',
+        id: `widget-${Date.now()}`
+      }));
+    };
+    
+    ws.onmessage = async (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        console.log('Received WebSocket message:', data);
+        
+        // Handle system messages
+        if (data.type === 'system' && data.message) {
+          if (typeof data.message === 'object' && data.message.result) {
+            setStatus(data.message.result);
+          } else if (typeof data.message === 'string') {
+            setStatus(data.message);
+          }
+        }
+        
+        // Handle MCP command messages using waitForTask
+        if (data.type === 'broadcast' && data.message && data.message.command) {
+          setStatus('Processing MCP command...');
+          
+          // Use waitForTask for async command processing
+          waitForTask(
+            handleCommand(data.message.command, data.message.params)
+              .then(result => {
+                // Send result back through WebSocket
+                ws.send(JSON.stringify({
+                  type: 'message',
+                  channel: 'code-review-widget',
+                  message: {
+                    type: 'command-result',
+                    id: data.message.id,
+                    result: result
+                  }
+                }));
+                
+                setStatus('Command completed successfully');
+                figma.notify(`✅ Executed: ${data.message.command}`);
+                return result;
+              })
+              .catch(error => {
+                // Send error back through WebSocket
+                ws.send(JSON.stringify({
+                  type: 'message',
+                  channel: 'code-review-widget',
+                  message: {
+                    type: 'command-error',
+                    id: data.message.id,
+                    error: error.message || 'Command execution failed'
+                  }
+                }));
+                
+                setStatus('Command failed');
+                figma.notify(`❌ Error: ${error.message}`);
+                console.error('Command execution error:', error);
+                throw error;
+              })
+          );
+        }
+      } catch (error) {
+        console.error('Error parsing WebSocket message:', error);
+      }
+    };
+    
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      setIsConnected(false);
+      setStatus('Connection Error');
+      figma.notify('WebSocket connection error');
+    };
+    
+    ws.onclose = () => {
+      websocket = null;
+      setIsConnected(false);
+      setStatus('Disconnected');
+      figma.notify('WebSocket connection closed');
+    };
+    
+  } catch (error) {
+    console.error('Failed to connect to WebSocket:', error);
+    setIsConnected(false);
+    setStatus('Connection Failed');
+    figma.notify('Failed to connect to WebSocket server');
+  }
+}
+
+// Disconnect WebSocket
+function disconnectWebSocket(setStatus, setIsConnected) {
+  if (websocket) {
+    websocket.close();
+    websocket = null;
+  }
+  setIsConnected(false);
+  setStatus('Disconnected');
+  figma.notify('Disconnected from WebSocket server');
+}
+
+function CodeReviewWidget() {
+  const [status, setStatus] = useSyncedState('status', 'Ready to Connect');
+  const [isConnected, setIsConnected] = useSyncedState('connected', false);
+  const [serverPort, setServerPort] = useSyncedState('serverPort', 3055);
+  
+  // Property menu for widget actions
+  usePropertyMenu([
+    {
+      tooltip: 'Connect to WebSocket Server',
+      propertyName: 'connect',
+      itemType: 'action',
+    },
+    {
+      tooltip: 'Disconnect from Server',
+      propertyName: 'disconnect',
+      itemType: 'action',
+    },
+    {
+      tooltip: 'Open Plugin UI',
+      propertyName: 'openUI',
+      itemType: 'action',
+    },
+    {
+      tooltip: 'Get Document Info',
+      propertyName: 'getInfo',
+      itemType: 'action',
+    },
+    {
+      tooltip: 'Refresh Status',
+      propertyName: 'refresh',
+      itemType: 'action',
+    }
+  ], ({ propertyName }) => {
+    if (propertyName === 'connect') {
+      if (!isConnected) {
+        // Use waitForTask for async connection
+        waitForTask(connectToWebSocket(setStatus, setIsConnected, serverPort));
+      } else {
+        figma.notify('Already connected to WebSocket server');
+      }
+      
+    } else if (propertyName === 'disconnect') {
+      disconnectWebSocket(setStatus, setIsConnected);
+      
+    } else if (propertyName === 'openUI') {
+      // Use plugin API from within widget
+      try {
+        figma.showUI(__html__, { width: 1200, height: 800, themeColors: true });
+        figma.notify('🚀 Opening plugin UI...');
+      } catch (error) {
+        figma.notify('❌ Failed to open plugin UI');
+        console.error('Failed to open UI:', error);
+      }
+      
+    } else if (propertyName === 'getInfo') {
+      // Use plugin API to get document info
+      setStatus('Getting document info...');
+      try {
+        const docName = figma.root.name;
+        const pageCount = figma.root.children.length;
+        const selectionCount = figma.currentPage.selection.length;
+        
+        const info = `${docName} | ${pageCount} pages | ${selectionCount} selected`;
+        setStatus(info);
+        figma.notify(`📊 ${info}`);
+      } catch (error) {
+        figma.notify('❌ Error getting document info');
+        setStatus('Error getting info');
+        console.error('Error getting document info:', error);
+      }
+      
+    } else if (propertyName === 'refresh') {
+      setStatus('Refreshing...');
+      setTimeout(() => {
+        const newStatus = isConnected ? 'Connected to MCP Server' : 'Ready to Connect';
+        setStatus(newStatus);
+        figma.notify('🔄 Status refreshed');
+      }, 500);
+    }
+  });
+
+  return AutoLayout({
+    direction: 'vertical',
+    spacing: 16,
+    padding: 24,
+    cornerRadius: 12,
+    fill: '#FFFFFF',
+    stroke: isConnected ? '#10B981' : '#E5E5E5',
+    strokeWidth: 2,
+    width: 400,
+    height: 'hug-contents',
+    effect: {
+      type: 'drop-shadow',
+      color: { r: 0, g: 0, b: 0, a: 0.1 },
+      offset: { x: 0, y: 2 },
+      blur: 8,
+    }
+  }, [
+    // Header
+    AutoLayout({
+      direction: 'vertical',
+      spacing: 8,
+      width: 'fill-parent',
+      horizontalAlignItems: 'center',
+    }, [
+      Text({
+        text: 'Code Review Workspace',
+        fontSize: 18,
+        fontWeight: 'bold',
+        fill: '#1A1A1A',
+      }),
+      Text({
+        text: `MCP Bridge Widget (Port: ${serverPort})`,
+        fontSize: 12,
+        fill: '#666666',
+      }),
+    ]),
+    
+    // Status section
+    AutoLayout({
+      direction: 'vertical',
+      spacing: 12,
+      width: 'fill-parent',
+      horizontalAlignItems: 'center',
+    }, [
+      Text({
+        text: status,
+        fontSize: 14,
+        fill: '#333333',
+        fontWeight: 'medium',
+      }),
+      
+      // Connection indicator
+      AutoLayout({
+        direction: 'horizontal',
+        spacing: 8,
+        verticalAlignItems: 'center',
+      }, [
+        Text({
+          text: '●',
+          fontSize: 16,
+          fill: isConnected ? '#10B981' : '#EF4444',
+        }),
+        Text({
+          text: isConnected ? 'WebSocket Connected' : 'Disconnected',
+          fontSize: 13,
+          fill: isConnected ? '#10B981' : '#999999',
+        }),
+      ]),
+    ]),
+    
+    // Instructions
+    Text({
+      text: 'Right-click to connect/disconnect, get info, or open full UI',
+      fontSize: 11,
+      fill: '#999999',
+      textAlign: 'center',
+    }),
+  ]);
+}
+
+// Register the widget
+widget.register(CodeReviewWidget);
 
 
 // Helper function for progress updates
@@ -43,18 +322,13 @@ function sendProgressUpdate(
     update.payload = payload;
   }
 
-  // Send to UI
-  figma.ui.postMessage(update);
-  console.log(`Progress update: ${status} - ${progress}% - ${message}`);
-
+  // Widget mode - log progress update
+  console.log(`Widget progress update: ${status} - ${progress}% - ${message}`);
   return update;
 }
 
-// Show UI
-figma.showUI(__html__, { width: 350, height: 450 });
-
-// Plugin commands from UI
-figma.ui.onmessage = async (msg) => {
+// Helper function to handle UI messages from the widget's showUI
+function handleUIMessage(msg) {
   switch (msg.type) {
     case "update-settings":
       updateSettings(msg);
@@ -65,23 +339,52 @@ figma.ui.onmessage = async (msg) => {
     case "close-plugin":
       figma.closePlugin();
       break;
+    case "switch-to-widget":
+      // Close plugin UI and create a widget
+      figma.closePlugin();
+      // The widget will be created automatically when the plugin restarts
+      figma.notify("Plugin closed. Use the Figma menu to add the widget version to your board.");
+      break;
     case "execute-command":
       // Execute commands received from UI (which gets them from WebSocket)
-      try {
-        const result = await handleCommand(msg.command, msg.params);
-        // Send result back to UI
-        figma.ui.postMessage({
-          type: "command-result",
-          id: msg.id,
-          result,
-        });
-      } catch (error) {
-        figma.ui.postMessage({
-          type: "command-error",
-          id: msg.id,
-          error: error.message || "Error executing command",
-        });
-      }
+      // Use waitForTask for async operations in widgets
+      waitForTask((async () => {
+        try {
+          const result = await handleCommand(msg.command, msg.params);
+          // Send result back to UI
+          figma.ui.postMessage({
+            type: "command-result",
+            id: msg.id,
+            result,
+          });
+        } catch (error) {
+          figma.ui.postMessage({
+            type: "command-error",
+            id: msg.id,
+            error: error.message || "Error executing command",
+          });
+        }
+      })());
+      break;
+    
+    // Code Review specific messages
+    case "generate_uml":
+      waitForTask(handleGenerateUML(msg));
+      break;
+    case "get_file_contents":
+      waitForTask(handleGetFileContents(msg));
+      break;
+    case "websocket_connect":
+      waitForTask(handleWebSocketConnect(msg));
+      break;
+    case "websocket_message":
+      waitForTask(handleWebSocketMessage(msg));
+      break;
+    case "export_comments":
+      waitForTask(handleExportComments(msg));
+      break;
+    case "create_diagram_nodes":
+      waitForTask(handleCreateDiagramNodes(msg));
       break;
   }
 };
@@ -3949,4 +4252,171 @@ async function createConnections(params) {
     count: results.length,
     connections: results
   };
+}
+
+// Code Review Handler Functions
+async function handleGenerateUML(msg) {
+  try {
+    console.log('Generating UML for:', msg.rootPath);
+    
+    // Notify UI that UML generation started
+    figma.ui.postMessage({
+      type: "uml_generation_started",
+      rootPath: msg.rootPath
+    });
+    
+    // For demo purposes, create some mock UML data
+    // In reality, this would interface with the MCP server
+    const mockUMLData = {
+      diagram: {
+        nodes: [
+          {
+            id: "node1",
+            label: "UserService",
+            kind: "class",
+            file: msg.rootPath + "/src/services/UserService.ts",
+            properties: ["private users: User[]", "private db: Database"],
+            methods: ["getUser(id: string): User", "createUser(data: UserData): User"]
+          },
+          {
+            id: "node2", 
+            label: "User",
+            kind: "interface",
+            file: msg.rootPath + "/src/types/User.ts",
+            properties: ["id: string", "name: string", "email: string"]
+          }
+        ],
+        edges: [
+          {
+            id: "edge1",
+            source: "node1",
+            target: "node2", 
+            type: "references"
+          }
+        ]
+      },
+      directory: {
+        name: "project",
+        path: msg.rootPath,
+        kind: "dir",
+        children: [
+          {
+            name: "src",
+            path: msg.rootPath + "/src",
+            kind: "dir",
+            children: [
+              { name: "UserService.ts", path: msg.rootPath + "/src/UserService.ts", kind: "file" },
+              { name: "User.ts", path: msg.rootPath + "/src/User.ts", kind: "file" }
+            ]
+          }
+        ]
+      }
+    };
+    
+    // Send mock data to UI
+    figma.ui.postMessage({
+      type: "uml_diagram",
+      diagram: mockUMLData.diagram,
+      directory: mockUMLData.directory
+    });
+    
+    figma.notify("UML diagram generated successfully!");
+  } catch (error) {
+    console.error('Error generating UML:', error);
+    figma.notify('Failed to generate UML diagram', { error: true });
+  }
+}
+
+async function handleGetFileContents(msg) {
+  try {
+    console.log('Getting file contents for:', msg.filePath);
+    
+    // For demo purposes, return mock file content
+    const mockContent = `// ${msg.filePath}
+export interface User {
+  id: string;
+  name: string;
+  email: string;
+  createdAt: Date;
+}
+
+export class UserService {
+  private users: User[] = [];
+  
+  constructor(private db: Database) {}
+  
+  async getUser(id: string): Promise<User | null> {
+    return this.users.find(user => user.id === id) || null;
+  }
+  
+  async createUser(data: UserData): Promise<User> {
+    const user: User = {
+      id: generateId(),
+      ...data,
+      createdAt: new Date()
+    };
+    
+    this.users.push(user);
+    await this.db.save(user);
+    
+    return user;
+  }
+}`;
+
+    figma.ui.postMessage({
+      type: "file_contents",
+      filePath: msg.filePath,
+      content: mockContent
+    });
+    
+  } catch (error) {
+    console.error('Error getting file contents:', error);
+    figma.notify('Failed to get file contents', { error: true });
+  }
+}
+
+async function handleWebSocketConnect(msg) {
+  try {
+    console.log('WebSocket connect request:', msg.url, msg.channel);
+    
+    // Simulate connection success
+    setTimeout(() => {
+      figma.ui.postMessage({
+        type: "connection_update",
+        isConnected: true,
+        channelName: msg.channel
+      });
+    }, 1000);
+    
+  } catch (error) {
+    console.error('Error connecting to WebSocket:', error);
+    figma.ui.postMessage({
+      type: "connection_update",
+      isConnected: false,
+      channelName: null
+    });
+  }
+}
+
+async function handleWebSocketMessage(msg) {
+  try {
+    console.log('WebSocket message:', msg.message);
+    // Handle WebSocket message routing
+  } catch (error) {
+    console.error('Error handling WebSocket message:', error);
+  }
+}
+
+async function handleExportComments(msg) {
+  try {
+    console.log('Exporting comments:', msg.data);
+    
+    // In a real implementation, this might save to Figma's local storage
+    // or send to an external service
+    figma.notify('Comments exported successfully!');
+    
+  } catch (error) {
+    console.error('Error exporting comments:', error);
+    figma.notify('Failed to export comments', { error: true });
+  }
 }

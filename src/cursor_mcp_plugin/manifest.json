@@ -1,9 +1,11 @@
 {
-  "name": "Cursor MCP Plugin",
+  "name": "Code Review Workspace",
   "id": "cursor-mcp-plugin",
   "api": "1.0.0",
-  "main": "code.js",
-  "ui": "ui.html",
+  "widgetApi": "1.0.0",
+  "main": "widget-test.js",
+  "ui": "ui-new.html",
+  "containsWidget": true,
   "editorType": [
     "figma",
     "figjam"

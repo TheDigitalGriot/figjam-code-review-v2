@@ -5,6 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import WebSocket from "ws";
 import { v4 as uuidv4 } from "uuid";
+import { UmlTools, generateUmlSchema, getDirectoryTreeSchema, getFileContentsSchema, searchSymbolsSchema } from './uml/index.js';
 
 // Define TypeScript interfaces for Figma responses
 interface FigmaResponse {
@@ -3000,6 +3001,156 @@ server.tool(
               }`,
           },
         ],
+      };
+    }
+  }
+);
+
+// Initialize UML tools
+const umlTools = new UmlTools();
+
+// UML Generation Tool
+server.tool(
+  "generate_uml",
+  "Generate UML/ERD diagram from codebase analysis",
+  generateUmlSchema,
+  async (params: any) => {
+    try {
+      const result = await umlTools.generateUml(params);
+      
+      // Send diagram payload via WebSocket if connected
+      if (ws && ws.readyState === WebSocket.OPEN && currentChannel) {
+        const payload = umlTools.getLastGeneratedPayload();
+        if (payload) {
+          ws.send(JSON.stringify({
+            type: 'uml:payload',
+            channel: currentChannel,
+            id: uuidv4(),
+            payload: payload
+          }));
+        }
+      }
+      
+      return {
+        content: [
+          {
+            type: "text",
+            text: result
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error generating UML: ${error instanceof Error ? error.message : String(error)}`
+          }
+        ]
+      };
+    }
+  }
+);
+
+// Directory Tree Tool
+server.tool(
+  "get_directory_tree",
+  "Get directory tree structure",
+  getDirectoryTreeSchema,
+  async (params: any) => {
+    try {
+      const result = await umlTools.getDirectoryTree(params);
+      return {
+        content: [
+          {
+            type: "text",
+            text: result
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error getting directory tree: ${error instanceof Error ? error.message : String(error)}`
+          }
+        ]
+      };
+    }
+  }
+);
+
+// File Contents Tool
+server.tool(
+  "get_file_contents",
+  "Get contents of a specific file",
+  getFileContentsSchema,
+  async (params: any) => {
+    try {
+      const result = await umlTools.getFileContents(params);
+      
+      // Send file contents via WebSocket if connected
+      if (ws && ws.readyState === WebSocket.OPEN && currentChannel) {
+        const parsedResult = JSON.parse(result);
+        if (parsedResult.success) {
+          ws.send(JSON.stringify({
+            type: 'code:open',
+            channel: currentChannel,
+            id: uuidv4(),
+            payload: {
+              file: parsedResult.filePath,
+              content: parsedResult.content
+            }
+          }));
+        }
+      }
+      
+      return {
+        content: [
+          {
+            type: "text",
+            text: result
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error getting file contents: ${error instanceof Error ? error.message : String(error)}`
+          }
+        ]
+      };
+    }
+  }
+);
+
+// Search Symbols Tool
+server.tool(
+  "search_symbols",
+  "Search for symbols in the generated UML diagram",
+  searchSymbolsSchema,
+  async (params: any) => {
+    try {
+      const result = await umlTools.searchSymbols(params);
+      return {
+        content: [
+          {
+            type: "text",
+            text: result
+          }
+        ]
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error searching symbols: ${error instanceof Error ? error.message : String(error)}`
+          }
+        ]
       };
     }
   }
