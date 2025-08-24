@@ -13,10 +13,17 @@ import {
 } from '@create-figma-plugin/ui'
 import { emit } from '@create-figma-plugin/utilities'
 import { h } from 'preact'
-import { useCallback, useState, useEffect } from 'preact/hooks'
-// TODO: Re-enable when React/Preact compatibility is resolved
-// import CodeMirror from '@uiw/react-codemirror'
-// import { langs } from '@uiw/codemirror-extensions-langs'
+import { useCallback, useState, useEffect, useRef } from 'preact/hooks'
+
+// CodeMirror 6 imports
+import { EditorView, basicSetup } from 'codemirror'
+import { EditorState } from '@codemirror/state'
+import { javascript } from '@codemirror/lang-javascript'
+import { css } from '@codemirror/lang-css'
+import { html } from '@codemirror/lang-html'
+import { json } from '@codemirror/lang-json'
+import { markdown } from '@codemirror/lang-markdown'
+import { oneDark } from '@codemirror/theme-one-dark'
 
 type Comment = {
   id: string
@@ -46,7 +53,35 @@ type CodeReviewUIProps = {
 function CodeReviewUI(props: CodeReviewUIProps) {
   const [selectedLines, setSelectedLines] = useState<number[]>(props.selectedLines || [])
   const [commentText, setCommentText] = useState('')
+  const editorRef = useRef<HTMLDivElement>(null)
+  const viewRef = useRef<EditorView | null>(null)
   
+  // Get language extension for syntax highlighting
+  const getLanguageExtension = useCallback((fileName: string) => {
+    const ext = fileName.split('.').pop()?.toLowerCase()
+    switch (ext) {
+      case 'js':
+      case 'jsx':
+      case 'ts':
+      case 'tsx':
+        return javascript()
+      case 'html':
+      case 'htm':
+        return html()
+      case 'css':
+      case 'scss':
+      case 'sass':
+        return css()
+      case 'json':
+        return json()
+      case 'md':
+      case 'markdown':
+        return markdown()
+      default:
+        return javascript() // Default to JS
+    }
+  }, [])
+
   const handleAddComment = useCallback(
     function () {
       if (commentText.trim() && selectedLines.length > 0) {
@@ -65,31 +100,37 @@ function CodeReviewUI(props: CodeReviewUIProps) {
     [commentText, selectedLines, props.fileName]
   )
 
-  // TODO: Re-enable when React/Preact compatibility is resolved
-  // Determine file extension for syntax highlighting
-  /*
-  const getLanguageExtension = (fileName: string) => {
-    const ext = fileName.split('.').pop()?.toLowerCase()
-    switch (ext) {
-      case 'js':
-      case 'jsx':
-        return [langs.javascript()]
-      case 'ts':
-      case 'tsx':
-        return [langs.typescript()]
-      case 'html':
-        return [langs.html()]
-      case 'css':
-        return [langs.css()]
-      case 'json':
-        return [langs.json()]
-      case 'md':
-        return [langs.markdown()]
-      default:
-        return [langs.javascript()] // Default to JS
+  // Initialize CodeMirror
+  useEffect(() => {
+    if (editorRef.current && !viewRef.current) {
+      const state = EditorState.create({
+        doc: props.fileContent,
+        extensions: [
+          basicSetup,
+          getLanguageExtension(props.fileName),
+          EditorView.editable.of(false), // Read-only
+          EditorView.theme({
+            '&': { height: '300px' },
+            '.cm-scroller': { overflow: 'auto' },
+            '.cm-focused': { outline: 'none' }
+          })
+        ]
+      })
+
+      viewRef.current = new EditorView({
+        state,
+        parent: editorRef.current
+      })
     }
-  }
-  */
+
+    // Cleanup
+    return () => {
+      if (viewRef.current) {
+        viewRef.current.destroy()
+        viewRef.current = null
+      }
+    }
+  }, [props.fileContent, props.fileName, getLanguageExtension])
   
   return (
     <Container space="medium">
@@ -97,28 +138,17 @@ function CodeReviewUI(props: CodeReviewUIProps) {
       <Text><strong>Code Review: {props.fileName}</strong></Text>
       <VerticalSpace space="medium" />
       
-      {/* TODO: Re-enable CodeMirror when React/Preact compatibility is resolved */}
-      <div style={{ border: '1px solid #ccc', borderRadius: '4px', overflow: 'hidden', padding: '12px', fontFamily: 'monospace', backgroundColor: '#f5f5f5' }}>
-        <pre style={{ margin: 0, whiteSpace: 'pre-wrap', fontSize: '12px' }}>
-          {props.fileContent}
-        </pre>
-      </div>
-      {/*
-      <CodeMirror
-        value={props.fileContent}
-        height="400px"
-        extensions={getLanguageExtension(props.fileName)}
-        theme="light"
-        editable={false}
-        basicSetup={{
-          lineNumbers: true,
-          foldGutter: false,
-          dropCursor: false,
-          allowMultipleSelections: false,
-          searchKeymap: false
+      {/* CodeMirror editor */}
+      <div 
+        ref={editorRef}
+        style={{ 
+          border: '1px solid #ccc', 
+          borderRadius: '4px', 
+          overflow: 'hidden',
+          minHeight: '300px',
+          maxHeight: '400px'
         }}
       />
-      */}
       
       <VerticalSpace space="medium" />
       

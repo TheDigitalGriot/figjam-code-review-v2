@@ -132,6 +132,106 @@ export default UserProfile;`
     loadFile(selectedFile)
   }
 
+  // Mock code content for review mode
+  const mockCode = `import React, { useState, useEffect } from 'react';
+import { User } from '../types/User';
+import { validateUser } from '../utils/validation';
+
+interface UserProfileProps {
+  user: User;
+  onUpdate: (user: User) => void;
+  isEditable?: boolean;
+}
+
+const UserProfile: React.FC<UserProfileProps> = ({
+  user,
+  onUpdate,
+  isEditable = false
+}) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [formData, setFormData] = useState(user);
+  
+  useEffect(() => {
+    setFormData(user);
+  }, [user]);
+  
+  const handleSave = async () => {
+    if (validateUser(formData)) {
+      await onUpdate(formData);
+      setIsEditing(false);
+    }
+  };
+  
+  const handleCancel = () => {
+    setFormData(user);
+    setIsEditing(false);
+  };
+  
+  return (
+    <div className="user-profile">
+      <div className="profile-header">
+        <h2>{formData.name}</h2>
+        {isEditable && (
+          <button 
+            onClick={() => setIsEditing(!isEditing)}
+            className="edit-btn"
+          >
+            {isEditing ? 'Cancel' : 'Edit'}
+          </button>
+        )}
+      </div>
+      
+      <div className="profile-details">
+        <div className="field">
+          <label>Email:</label>
+          {isEditing ? (
+            <input 
+              type="email"
+              value={formData.email}
+              onChange={(e) => 
+                setFormData({...formData, email: e.target.value})
+              }
+            />
+          ) : (
+            <span>{formData.email}</span>
+          )}
+        </div>
+        
+        <div className="field">
+          <label>Role:</label>
+          {isEditing ? (
+            <select 
+              value={formData.role}
+              onChange={(e) => 
+                setFormData({...formData, role: e.target.value})
+              }
+            >
+              <option value="admin">Admin</option>
+              <option value="user">User</option>
+              <option value="guest">Guest</option>
+            </select>
+          ) : (
+            <span>{formData.role}</span>
+          )}
+        </div>
+      </div>
+      
+      {isEditing && (
+        <div className="actions">
+          <button onClick={handleSave} className="save-btn">
+            Save Changes
+          </button>
+          <button onClick={handleCancel} className="cancel-btn">
+            Cancel
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default UserProfile;`
+
   function generateDiagram() {
     setDiagramNodes([
       { id: '1', label: 'UserService',     kind: 'class',    file: '/src/services/UserService.ts',   symbol: 'class UserService' },
@@ -206,8 +306,8 @@ export default UserProfile;`
             setComments([...comments, comment])
           })
           showUI(
-            { height: 200, width: 400, title: 'Add Comment' },
-            { file: currentFile, line: selectedLines[0], selectedLines }
+            { height: 500, width: 700, title: 'Code Review' },
+            { fileContent, fileName: currentFile, selectedLines }
           )
         }
       } else if (propertyName === 'clearSelection') {
@@ -235,7 +335,7 @@ export default UserProfile;`
     return renderDiagram(diagramNodes, diagramEdges, selectedFile, setSelectedFile, generateDiagram)
   }
   if (mode === 'review') {
-    return renderCodeReview(currentFile, fileContent, selectedLines, setSelectedLines)
+    return renderCodeReview(currentFile || 'UserProfile.tsx', fileContent || mockCode, selectedLines, setSelectedLines)
   }
   // comments
   return renderComments(comments)
